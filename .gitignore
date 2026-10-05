@@ -1,1 +1,7 @@
-.env
+﻿*.gguf
+bpf_llama_env/
+outputs/
+lora_model/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

@@ -317,6 +317,7 @@ class JobSpec:
     style: str
     hook_mention: str
     params: dict[str, Any]
+    category_index: int = 0
     attempt: int = 0
 
 
@@ -1016,6 +1017,7 @@ def generate_job_specs(total_rows: int, seed: int) -> list[JobSpec]:
                     style=style,
                     hook_mention=hook_mention,
                     params=params,
+                    category_index=i,
                 )
             )
 
@@ -1027,43 +1029,286 @@ def generate_job_specs(total_rows: int, seed: int) -> list[JobSpec]:
 # ====================================================================
 
 
-def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
-    """Generate verifier-safe intent and C code offline for --dry-run."""
+def _build_dry_run_intent(spec: JobSpec) -> str:
+    """Generate diverse, verifier-safe intent matching spec style and tier."""
+    job_in_style = spec.category_index // 6
+    num = spec.job_id[4:]
     p = spec.params
-    hook = "XDP hook" if spec.hook_mention == "explicit" else "network driver"
-    k_hook = "kprobe" if spec.hook_mention == "explicit" else "syscall trace"
+    v_idx = job_in_style % 5
 
-    intents_by_style: dict[str, str] = {
-        "terse-imperative": (
-            f"Drop incoming network packets matching {p} "
-            f"immediately using {hook}."
-        ),
-        "soc-ticket": (
-            f"Security Ticket SEC-{spec.job_id[4:]}: Filter hostile network "
-            f"traffic matching parameter set {p} via {hook}."
-        ),
-        "incident-response-urgent": (
-            f"URGENT INCIDENT ALERT: Immediately isolate host and drop "
-            f"traffic for {p} at {hook} level."
-        ),
-        "plain-english-non-expert": (
-            f"Please write a kernel safety program to prevent incoming "
-            f"connections from {p} before they reach the stack."
-        ),
-        "compliance-auditor": (
-            f"Compliance Mandate SEC-AUDIT: Restrict packet flow and filter "
-            f"{p} in accordance with firewall policies."
-        ),
-        "devops-runbook": (
-            f"Infrastructure Runbook Step {spec.job_id[4:]}: Enforce packet "
-            f"filtering rule for {p} to safeguard host."
-        ),
+    verbs = [
+        "Drop all",
+        "Discard all",
+        "Block all",
+        "Reject all",
+        "Silently filter all",
+    ][v_idx]
+
+    if spec.hook_mention == "explicit":
+        hooks = [
+            "using XDP hook",
+            "via the XDP driver",
+            "at the XDP layer",
+            "with an XDP program",
+            "through the XDP hook",
+        ][v_idx]
+        k_hooks = [
+            "using kprobe",
+            "via kprobe hook",
+            "at the kprobe boundary",
+            "with a kprobe program",
+            "through kprobe tracing",
+        ][v_idx]
+    else:
+        hooks = [
+            "at early ingress",
+            "at network driver layer",
+            "before kernel stack processing",
+            "at the edge interface",
+            "at the ingress boundary",
+        ][v_idx]
+        k_hooks = [
+            "at the syscall boundary",
+            "during kernel execution tracing",
+            "via system call intercept",
+            "at kernel entry points",
+            "during kernel syscall logging",
+        ][v_idx]
+
+    cat = spec.category
+    if cat == "X1":
+        ip = p.get("ip", "203.0.113.50")
+        targets = [
+            f"incoming IPv4 packets originating from host {ip}",
+            f"inbound network frames sent by source address {ip}",
+            f"ingress datagrams arriving from remote endpoint {ip}",
+            f"hostile network traffic originating at IP {ip}",
+            f"unauthorized incoming connections from sender {ip}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X2":
+        sub = p.get("subnet", "192.0.2.0/24")
+        targets = [
+            f"inbound network traffic originating from CIDR subnet {sub}",
+            f"incoming packets belonging to IP prefix range {sub}",
+            f"ingress datagrams arriving from network block {sub}",
+            f"hostile packets originating inside subnet allocation {sub}",
+            f"unauthorized network frames sent from CIDR range {sub}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X3":
+        port = p.get("port", 8080)
+        targets = [
+            f"inbound TCP datagrams targeting destination port {port}",
+            f"incoming TCP packets addressed to local port {port}",
+            f"ingress TCP segments bound for service port {port}",
+            f"external TCP traffic attempting to reach port {port}",
+            f"unauthorized TCP connection requests directed at port {port}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X4":
+        port = p.get("port", 53)
+        targets = [
+            f"inbound UDP datagrams directed to destination port {port}",
+            f"incoming UDP packets targeting service port {port}",
+            f"ingress UDP traffic addressed to local port {port}",
+            f"unsolicited UDP packets bound for port {port}",
+            f"unauthorized UDP communications aimed at port {port}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X5":
+        thresh = p.get("threshold", 1000)
+        targets = [
+            f"excess TCP SYN flood packets beyond rate threshold {thresh}",
+            f"incoming SYN packets in LRU map when rate surpasses {thresh}",
+            f"flooding TCP SYN connection requests exceeding {thresh}",
+            f"hostile SYN flood attempts surpassing maximum quota of {thresh}",
+            f"burst SYN datagrams beyond cutoff limit of {thresh}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X6":
+        sport = p.get("source_port", 53)
+        targets = [
+            f"inbound UDP reflection traffic from source port {sport}",
+            f"incoming amplified reflection frames from remote port {sport}",
+            f"ingress UDP datagrams from amplification service port {sport}",
+            f"reflected volumetric attack datagrams bearing origin {sport}",
+            f"unsolicited reflection responses sent from source port {sport}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X7":
+        targets = [
+            "inbound ICMP echo request ping datagrams for stealth",
+            "incoming ICMP ping echo packets to prevent reconnaissance",
+            "ingress ICMP echo frames to avoid active topology scans",
+            "external ICMP ping queries to secure host from sweep probes",
+            "unauthorized ICMP echo datagrams to ensure stealth perimeter",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X8":
+        aip = p.get("allowed_ip", "192.168.1.10")
+        targets = [
+            f"all incoming traffic except authorized host {aip}",
+            f"all ingress datagrams except verified source address {aip}",
+            f"all inbound packets unless originating from approved {aip}",
+            f"any network frame not sent by authorized trusted IP {aip}",
+            f"all perimeter traffic while permitting only origin {aip}",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "X9":
+        targets = [
+            "fragmented IPv4 datagrams to prevent reassembly evasion",
+            "split IPv4 packets to protect from fragment overlap attacks",
+            "fragmented network frames to block slicing evasion mechanisms",
+            "all fragmented IP traffic to enforce packet atomic inspection",
+            "ingress fragmented IPv4 datagrams to thwart bypass attempts",
+        ]
+        target = targets[v_idx]
+        core_action = f"{verbs} {target} {hooks}."
+    elif cat == "K1":
+        targets = [
+            "host process execution events logging PID and command line",
+            "every execve invocation outputting process credentials and path",
+            "newly spawned process executions with identifier and comm string",
+            "system command launches recording process genealogy and binary",
+            "executable executions capturing PID and executed filename",
+        ]
+        target = targets[v_idx]
+        core_action = f"Audit and record {target} {k_hooks}."
+    elif cat == "K2":
+        path = p.get("path", "/etc/shadow")
+        targets = [
+            f"filesystem openat calls targeting sensitive file path {path}",
+            f"file access attempts directed at protected system file {path}",
+            f"open operations touching sensitive configuration path {path}",
+            f"unauthorized process access directed at confidential {path}",
+            f"filesystem open events touching protected credential {path}",
+        ]
+        target = targets[v_idx]
+        core_action = f"Trace and alert on {target} {k_hooks}."
+    elif cat == "K3":
+        uid = p.get("uid", 1000)
+        comm = p.get("comm", "curl")
+        targets = [
+            f"process execution matching user ID {uid} and command {comm}",
+            f"execve calls initiated by UID {uid} launching binary {comm}",
+            f"command invocations where caller UID is {uid} executing {comm}",
+            f"application executions launched by user {uid} named {comm}",
+            f"process creation events for utility {comm} under UID {uid}",
+        ]
+        target = targets[v_idx]
+        core_action = f"Filter and log {target} {k_hooks}."
+    elif cat == "K4":
+        targets = [
+            "syscall executions per PID in kernel map for anomaly detection",
+            "command launch counts keyed by process ID in BPF hash table",
+            "per-process execution frequency metrics in kernel storage map",
+            "task invocation rates indexed by PID for behavioral profiling",
+            "running execution tallies per process identifier inside BPF map",
+        ]
+        target = targets[v_idx]
+        core_action = f"Count and aggregate {target} {k_hooks}."
+    elif cat == "K5":
+        sdir = p.get("suspicious_dir", "/tmp")
+        targets = [
+            f"executable launches originating from directory {sdir}",
+            f"execve invocations for binaries inside staging folder {sdir}",
+            f"unauthorized programs executing out of temporary path {sdir}",
+            f"suspicious binary execution attempts spawned from {sdir}",
+            f"process execution events where binary path starts with {sdir}",
+        ]
+        target = targets[v_idx]
+        core_action = f"Detect and alert on {target} {k_hooks}."
+    else:
+        core_action = f"{verbs} matching events {hooks}."
+
+    style_wrappers = {
+        "terse-imperative": [
+            f"{core_action}",
+            f"Action required: {core_action}",
+            f"Policy enforcement: {core_action}",
+            f"Mandatory directive: {core_action}",
+            f"Immediate rule: {core_action}",
+        ],
+        "soc-ticket": [
+            f"Security Ticket SEC-{num}: {core_action}",
+            f"SOC Incident Item #{num}: {core_action}",
+            f"Threat Queue Alert #{num}: {core_action}",
+            f"Investigation Case #{num}: {core_action}",
+            f"SOC Response Ticket #{num}: {core_action}",
+        ],
+        "incident-response-urgent": [
+            f"URGENT IR ALERT: Active threat detected. {core_action}",
+            f"SEV-1 SECURITY INCIDENT: Containment required. {core_action}",
+            f"CRITICAL EMERGENCY NOTICE: Ongoing attack. {core_action}",
+            f"ACTIVE DEFENSE DIRECTIVE: Isolate activity. {core_action}",
+            f"HIGH PRIORITY MITIGATION: Contain attack now. {core_action}",
+        ],
+        "plain-english-non-expert": [
+            f"Could you please help us write an eBPF filter? {core_action}",
+            f"We need a safe kernel safety program: {core_action}",
+            f"Can someone configure a security rule for us? {core_action}",
+            f"Please set up an automated protection rule: {core_action}",
+            f"We would like a simple program to protect node: {core_action}",
+        ],
+        "compliance-auditor": [
+            f"Compliance Audit Finding SEC-{num}: {core_action}",
+            f"Regulatory Standard Control #{num}: {core_action}",
+            f"Security Benchmark Item #{num}: {core_action}",
+            f"Governance Mandate Requirement #{num}: {core_action}",
+            f"System Hardening Specification #{num}: {core_action}",
+        ],
+        "devops-runbook": [
+            f"Production Runbook Procedure {num}: {core_action}",
+            f"Site Reliability Playbook Step {num}: {core_action}",
+            f"Infrastructure Guide Task {num}: {core_action}",
+            f"Platform Maintenance Action {num}: {core_action}",
+            f"Deployment Automation Task {num}: {core_action}",
+        ],
     }
 
-    intent = intents_by_style.get(
-        spec.style,
-        f"Filter traffic for parameters {p} at the ingress boundary.",
-    )
+    intent = style_wrappers[spec.style][v_idx]
+
+    tier_phrases = {
+        "basic": [
+            "Provide a standard baseline program.",
+            "Keep implementation concise and direct.",
+            "Ensure basic functional operation.",
+            "Generate clean straightforward code.",
+            "Maintain simple single-function logic.",
+        ],
+        "intermediate": [
+            "Ensure complete error handling and verifier safety.",
+            "Include necessary validation and bounds verification.",
+            "Verify all offsets matching kernel safety standards.",
+            "Implement full sanity checks for safe loading.",
+            "Ensure verifier-compliant bounds checking.",
+        ],
+        "advanced": [
+            "Optimize performance with strict verifier proofs.",
+            "Maximize packet processing rate with safe bounds.",
+            "Guarantee zero verifier rejections under load.",
+            "Implement zero-overhead bounds checks.",
+            "Enforce verifier safety with optimized checks.",
+        ],
+    }
+    tier_phrase = tier_phrases[spec.tier][v_idx]
+
+    return f"{intent} {tier_phrase}"
+
+
+def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
+    """Generate verifier-safe intent and C code offline for --dry-run."""
+    intent = _build_dry_run_intent(spec)
+    p = spec.params
 
     # Common code blocks
     xdp_prologue = (
@@ -1103,11 +1348,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     if cat == "X1":
         ip_hex = p.get("ip_hex", "0xCB007132")
-        ip_str = p.get("ip", "203.0.113.50")
-        intent = (
-            f"Drop all incoming network packets from source address {ip_str} "
-            f"at the earliest {hook} point."
-        )
         c_code = (
             f"{xdp_hdrs}"
             'SEC("xdp")\n'
@@ -1124,11 +1364,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
     elif cat == "X2":
         net_hex = p.get("net_hex", "0xC0000200")
         mask_hex = p.get("mask_hex", "0xFFFFFF00")
-        subnet = p.get("subnet", "192.0.2.0/24")
-        intent = (
-            f"Filter and drop incoming traffic originating from subnet "
-            f"{subnet} at the {hook}."
-        )
         c_code = (
             f"{xdp_hdrs}"
             'SEC("xdp")\n'
@@ -1144,10 +1379,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "X3":
         port = p.get("port", 8080)
-        intent = (
-            f"Block and drop all inbound TCP traffic destined for port "
-            f"{port} at the {hook} level."
-        )
         c_code = (
             "#include <uapi/linux/bpf.h>\n"
             "#include <linux/in.h>\n"
@@ -1177,10 +1408,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "X4":
         port = p.get("port", 5353)
-        intent = (
-            f"Reject and discard all incoming UDP datagrams targeting port "
-            f"{port} via {hook}."
-        )
         c_code = (
             "#include <uapi/linux/bpf.h>\n"
             "#include <linux/in.h>\n"
@@ -1210,10 +1437,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "X5":
         thresh = p.get("threshold", 1000)
-        intent = (
-            f"Mitigate SYN floods by tracking source counts in an LRU map and "
-            f"dropping over threshold {thresh}."
-        )
         c_code = (
             "#include <uapi/linux/bpf.h>\n"
             "#include <linux/in.h>\n"
@@ -1261,10 +1484,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "X6":
         sport = p.get("source_port", 53)
-        intent = (
-            f"Defend against reflection amplification by dropping inbound UDP "
-            f"packets from source port {sport} at {hook}."
-        )
         c_code = (
             "#include <uapi/linux/bpf.h>\n"
             "#include <linux/in.h>\n"
@@ -1293,11 +1512,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
         )
 
     elif cat == "X7":
-        intent = (
-            f"[{spec.job_id}] Protect host from network reconnaissance by "
-            f"dropping all ICMP ping echo requests at {hook} layer "
-            f"({spec.tier})."
-        )
         c_code = (
             "#include <uapi/linux/bpf.h>\n"
             "#include <linux/in.h>\n"
@@ -1325,11 +1539,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "X8":
         aip_hex = p.get("allowed_ip_hex", "0xC0A8010A")
-        aip = p.get("allowed_ip", "192.168.1.10")
-        intent = (
-            f"Enforce strict default-drop network security policy allowing "
-            f"only inbound IP {aip} at {hook}."
-        )
         c_code = (
             f"{xdp_hdrs}"
             'SEC("xdp")\n'
@@ -1344,11 +1553,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
         )
 
     elif cat == "X9":
-        intent = (
-            f"[{spec.job_id}] Harden network perimeter against evasion by "
-            f"dropping all fragmented IPv4 packets using {hook} "
-            f"({spec.tier})."
-        )
         c_code = (
             f"{xdp_hdrs}"
             'SEC("xdp")\n'
@@ -1363,10 +1567,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
         )
 
     elif cat == "K1":
-        intent = (
-            f"[{spec.job_id}] Audit and log host execution events including "
-            f"process identifier and command line via {k_hook} ({spec.tier})."
-        )
         c_code = (
             f"{kprobe_hdrs}"
             "#define COMM_LEN 16\n"
@@ -1394,10 +1594,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "K2":
         path = p.get("path", "/etc/shadow")
-        intent = (
-            "Monitor filesystem integrity and alert on openat calls "
-            f"targeting critical file {path} using {k_hook}."
-        )
         c_code = (
             f"{kprobe_hdrs}"
             "#define PATH_LEN 64\n\n"
@@ -1433,11 +1629,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "K3":
         uid = p.get("uid", 1000)
-        comm = p.get("comm", "curl")
-        intent = (
-            f"Filter process execution events by verifying caller user "
-            f"identifier {uid} and command {comm} with {k_hook}."
-        )
         c_code = (
             f"{kprobe_hdrs}"
             "#define COMM_LEN 16\n\n"
@@ -1459,11 +1650,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
         )
 
     elif cat == "K4":
-        intent = (
-            f"[{spec.job_id}] Record per-process syscall invocations in a "
-            f"kernel hash map for behavioral profiling using {k_hook} "
-            f"({spec.tier})."
-        )
         c_code = (
             f"{kprobe_hdrs}"
             "struct {\n"
@@ -1493,10 +1679,6 @@ def generate_dry_run_sample(spec: JobSpec) -> tuple[str, str]:
 
     elif cat == "K5":
         sdir = p.get("suspicious_dir", "/tmp")
-        intent = (
-            f"Detect malware execution attempts by monitoring execve calls "
-            f"from suspicious directory {sdir} via {k_hook}."
-        )
         c_code = (
             f"{kprobe_hdrs}"
             "#define PATH_LEN 64\n\n"
@@ -1620,29 +1802,38 @@ def build_gemini_payload(
 # ====================================================================
 
 
+_GLOBAL_CONSOLE: Console | None = None
+
+
 def _make_console() -> Console:
     """Return a Rich Console safe for Windows legacy terminals.
 
     On Windows the default stdout encoding is cp1252, which cannot
     represent the braille spinner characters Rich uses (U+280B etc.).
-    We wrap the raw stdout binary buffer with a UTF-8 TextIOWrapper so
-    Rich writes UTF-8 bytes directly, bypassing the cp1252 codec.
-    ``legacy_windows=False`` disables Rich's own Windows shim so it
-    renders ANSI sequences instead of the legacy Win32 API path.
-    ``force_terminal=True`` preserves colour/markup when stdout is
-    redirected (e.g. CI log capture).
+    We wrap the raw stdout binary buffer with a UTF-8 TextIOWrapper once
+    and cache the resulting Console instance. Caching ensures the wrapper
+    is never garbage-collected or closed prematurely across multiple calls.
     """
+    global _GLOBAL_CONSOLE
+    if _GLOBAL_CONSOLE is not None:
+        return _GLOBAL_CONSOLE
+
     if hasattr(sys.stdout, "buffer"):
         utf8_stream: io.TextIOWrapper = io.TextIOWrapper(
-            sys.stdout.buffer, encoding="utf-8", errors="replace"
+            sys.stdout.buffer,
+            encoding="utf-8",
+            errors="replace",
+            write_through=True,
         )
     else:
         utf8_stream = sys.stdout  # type: ignore[assignment]
-    return Console(
+
+    _GLOBAL_CONSOLE = Console(
         file=utf8_stream,
         legacy_windows=False,
         force_terminal=True,
     )
+    return _GLOBAL_CONSOLE
 
 
 class DatasetEngine:
